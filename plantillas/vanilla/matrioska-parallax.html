@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Receta 16: matrioska + parallax (vanilla)</title>
+
+<!--
+  RECETA 16 del catálogo de FrontLaxWeb: MATRIOSKA + PARALLAX.
+  Sin dependencias. Se abre con doble clic. Copiar y adaptar los tokens de marca.
+
+  LA IDEA EN UNA FRASE
+  El scroll deja de mover la página y pasa a mover una cámara que avanza en línea recta
+  por un túnel de capas. Cada capa está "dentro" de la anterior, como una muñeca rusa.
+
+  POR QUÉ FUNCIONA
+  Componemos tres recetas del catálogo:
+    1  parallax de capas   -> los elementos dentro de cada capa se desfasan entre sí
+   10  zoom al scroll      -> el avance de la cámara se expresa como escala
+   11  máscara / recorte   -> el marco de cada capa recorta lo que hay dentro
+
+  LA MATEMÁTICA (es toda la receta, y cabe en tres líneas)
+    camara = progreso * (N - 1)     posición de la cámara, medida en "capas"
+    d      = camara - i             a cuántas capas de distancia queda la capa i
+    escala = 2 ^ d                  cada capa que avanzas, el mundo duplica su tamaño
+  Con d = -1 la capa se ve a la mitad (está dentro de la anterior: matrioska).
+  Con d =  0 la cámara está justo en ella, a tamaño natural.
+  Con d = +1 ya la ha atravesado y se sale de cuadro.
+  La opacidad se apaga al alejarse de d = 0, da igual por qué lado, con una meseta
+  central para que en cada momento haya una capa que manda y se lea sin competencia.
+
+  POLÍTICA DE LA CASA (SKILL.md)
+  El dial --motion-gain comprime el recorrido en vez de apagarlo:
+    escala = 1 + (2^d - 1) * gain
+  Con gain 1 el rango de escala es [0.5, 2] (zoom de cámara completo).
+  Con gain 0.25 pasa a [0.87, 1.25]: el efecto sigue ahí, pero como acento.
+  Con gain 0 la escala es 1 y el efecto degrada a un fundido encadenado. No se rompe.
+  El parallax de ratón NO se multiplica por gain: lo dirige el visitante en tiempo real
+  y lo detiene dejando el ratón quieto (regla 3 del dial).
+-->
+
+<script>
+/* INTERRUPTOR CENTRAL DE MOVIMIENTO. Va en el <head>, antes que el CSS de animación.
+   Fija el dial y la clase de la que cuelgan todos los estados animados. */
+(function () {
+  var h = document.documentElement;
+  var q = new URLSearchParams(location.search).get('motion');
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var gain = q === 'off' ? 0 : q === 'full' ? 1 : reduce ? 0.25 : 1;
+  h.style.setProperty('--motion-gain', String(gain));
+  h.classList.toggle('motion', gain > 0);
+})();
+</script>
+
+<style>
+  /* ---- Tokens de marca: esto es lo único que se cambia por proyecto ---------- */
+  :root {
+    --bg:      #0b0d12;
+    --fg:      #f2f4f8;
+    --tenue:   #8a93a6;
+    --acento1: #6ee7d1;
+    --acento2: #8ab4ff;
+    --acento3: #f0a6ff;
+    --acento4: #ffd166;
+    --acento5: #ff8f6b;
+    --fuente:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    /* --motion-gain lo pone el script de arriba. Este es el respaldo si el JS no corre. */
+    --motion-gain: 1;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: var(--fuente); -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- Estado BASE: sin JS, sin clase .motion -------------------------------
+     Las capas se leen una debajo de otra, en flujo normal. Nadie se queda sin
+     contenido porque un script no haya arrancado. Progressive enhancement. */
+  .matrioska { position: relative; }
+  .capa {
+    display: grid; place-items: center;
+    min-height: 60vh; padding: 8vh 6vw;
+  }
+
+  /* ---- Estado ANIMADO ------------------------------------------------------
+     Hacen falta DOS condiciones, y las dos son deliberadas:
+       html.motion   -> el visitante no ha usado la válvula
+       .activa       -> el script ha medido el viewport y confirma que hay sitio
+     La segunda evita la trampa del viewport de 0 px (paneles de preview sin
+     dimensionar, webviews incrustados): si no se puede medir, el efecto no se
+     enciende y las capas se quedan en flujo, legibles. */
+  /* Altura de la sección = una pantalla pegada + un tramo de scroll por capa. */
+  html.motion .matrioska.activa { height: 500vh; }
+  html.motion .matrioska.activa .matrioska__viewport {
+    position: sticky; top: 0;
+    height: 100vh; overflow: hidden;
+    display: grid; place-items: center;
+  }
+  html.motion .matrioska.activa .capa {
+    position: absolute; inset: 0;
+    min-height: 0; padding: 0;
+    will-change: transform, opacity;   /* solo 5 elementos: uso justificado */
+  }
+  /* CINTURÓN DE SEGURIDAD: la primera capa nace visible. Si el bucle de animación
+     muriera (pestaña en segundo plano, error de JS), el hero sigue en pantalla.
+     Nunca dejes contenido invisible a merced de un script. */
+  html.motion .matrioska.activa .capa + .capa { opacity: 0; }
+
+  /* ---- El marco de cada capa: lo que hace VISIBLE la sensación de anidamiento -
+     Sin marcos, un zoom se percibe como "algo crece". Con marcos, se percibe como
+     "estoy entrando". El borde es la pista de profundidad. */
+  .marco {
+    width: min(78vw, 62vh); aspect-ratio: 1;
+    border: 2px solid currentColor; border-radius: 28px;
+    padding: clamp(1rem, 2.6vw, 2rem); text-align: center;
+    background: color-mix(in srgb, var(--bg) 72%, transparent);
+    /* TRES ZONAS, y la del medio va VACÍA a propósito.
+       Es la regla de composición de esta receta: la capa siguiente aparece a la
+       mitad de tamaño, o sea justo en el centro del marco. Si ahí pones el titular,
+       padre e hija se pisan y se leen los dos mal. El centro es el túnel. */
+    display: grid; grid-template-rows: auto 1fr auto; justify-items: center;
+  }
+  .cabecera { display: grid; gap: .5rem; justify-items: center; align-content: start; }
+  .hueco { }   /* vacío. No es un descuido: es por donde se ve el fondo del túnel. */
+  .capa:nth-child(1) .marco { color: var(--acento1); }
+  .capa:nth-child(2) .marco { color: var(--acento2); }
+  .capa:nth-child(3) .marco { color: var(--acento3); }
+  .capa:nth-child(4) .marco { color: var(--acento4); }
+  .capa:nth-child(5) .marco { color: var(--acento5); }
+
+  .indice { font-size: .78rem; letter-spacing: .22em; text-transform: uppercase; }
+  .titulo {
+    color: var(--fg); font-size: clamp(1.25rem, 3vw, 2.2rem);
+    line-height: 1.08; margin: 0; text-wrap: balance; max-width: 18ch;
+  }
+  .pie { color: var(--tenue); font-size: clamp(.85rem, 1.6vw, 1rem); margin: 0; max-width: 34ch; }
+
+  /* ---- Zonas de respiro antes y después: el efecto necesita entrada y salida -- */
+  .respiro {
+    min-height: 60vh; display: grid; place-items: center;
+    padding: 6vh 6vw; text-align: center; color: var(--tenue);
+  }
+
+  /* ---- VÁLVULA VISIBLE (regla 4 de la política) -----------------------------
+     Una válvula que solo existe en la URL no la encuentra quien la necesita. */
+  .valvula {
+    position: fixed; right: 1rem; bottom: 1rem; z-index: 10;
+    font: inherit; font-size: .8rem; color: var(--tenue);
+    background: color-mix(in srgb, var(--bg) 80%, transparent);
+    border: 1px solid currentColor; border-radius: 999px;
+    padding: .5rem .9rem; text-decoration: none;
+    backdrop-filter: blur(8px);
+  }
+  .valvula:hover, .valvula:focus-visible { color: var(--fg); }
+</style>
+</head>
+<body>
+
+<header class="respiro">
+  <p>Baja. El scroll ya no mueve la página: mueve la cámara.</p>
+</header>
+
+<section class="matrioska" data-matrioska>
+  <div class="matrioska__viewport">
+
+    <!-- data-parallax = con cuánta fuerza se desfasa este elemento dentro de su capa.
+         Valores distintos por elemento = profundidad interna (receta 1). -->
+    <div class="capa">
+      <div class="marco">
+        <div class="cabecera">
+          <span class="indice" data-parallax="0.9">Capa 01</span>
+          <h1 class="titulo" data-parallax="0.35">El titular que abre la historia</h1>
+        </div>
+        <div class="hueco"></div>
+        <p class="pie" data-parallax="1.4">Cada capa es una idea. La cámara entra en ellas de una en una.</p>
+      </div>
+    </div>
+
+    <div class="capa">
+      <div class="marco">
+        <div class="cabecera">
+          <span class="indice" data-parallax="0.9">Capa 02</span>
+          <h2 class="titulo" data-parallax="0.35">La segunda ya estaba dentro de la primera</h2>
+        </div>
+        <div class="hueco"></div>
+        <p class="pie" data-parallax="1.4">Por eso se llama matrioska: ya la veías, pequeña, antes de llegar.</p>
+      </div>
+    </div>
+
+    <div class="capa">
+      <div class="marco">
+        <div class="cabecera">
+          <span class="indice" data-parallax="0.9">Capa 03</span>
+          <h2 class="titulo" data-parallax="0.35">El zoom es el avance</h2>
+        </div>
+        <div class="hueco"></div>
+        <p class="pie" data-parallax="1.4">No hay desplazamiento lateral: lo que crece es el mundo.</p>
+      </div>
+    </div>
+
+    <div class="capa">
+      <div class="marco">
+        <div class="cabecera">
+          <span class="indice" data-parallax="0.9">Capa 04</span>
+          <h2 class="titulo" data-parallax="0.35">El ritmo lo marca el dedo</h2>
+        </div>
+        <div class="hueco"></div>
+        <p class="pie" data-parallax="1.4">Si el visitante para, la cámara para. Nunca se le quita el mando.</p>
+      </div>
+    </div>
+
+    <div class="capa">
+      <div class="marco">
+        <div class="cabecera">
+          <span class="indice" data-parallax="0.9">Capa 05</span>
+          <h2 class="titulo" data-parallax="0.35">Y aquí es donde querías llegar</h2>
+        </div>
+        <div class="hueco"></div>
+        <p class="pie" data-parallax="1.4">La última capa se queda quieta y centrada: es la que convierte.</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<footer class="respiro">
+  <p>Fin del túnel. A partir de aquí, la página vuelve a ser una página.</p>
+</footer>
+
+<a class="valvula" href="?motion=off" data-valvula>Reducir movimiento</a>
+
+<script>
+(function () {
+  var seccion = document.querySelector('[data-matrioska]');
+  if (!seccion) return;
+
+  var capas = Array.prototype.slice.call(seccion.querySelectorAll('.capa'));
+  var N = capas.length;
+  if (N < 2) return;
+
+  /* El dial se lee UNA vez. Es un valor de arranque, no algo que consultar por frame. */
+  var GAIN = parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue('--motion-gain')
+  ) || 0;
+
+  var BASE    = 2;     // cuánto crece el mundo por cada capa avanzada
+  var MESETA  = 0.30;  // radio en el que una capa manda sola, a opacidad plena
+  var DESFASE = 44;    // píxeles de parallax interno a fuerza 1
+  var RATON   = 18;    // píxeles de desplazamiento por el ratón, en el borde de la pantalla
+
+  /* VENTANA: a cuántas capas de distancia una capa se apaga del todo. Depende del
+     dial, y esto NO es un capricho: con el zoom completo la capa vecina se ve a la
+     mitad de tamaño, así que solaparla es lo que produce la matrioska. Con el dial
+     bajo todas las capas quedan casi del mismo tamaño, y ese mismo solape convierte
+     dos titulares en un borrón. Menos zoom, cruces más cortos. */
+  var VENTANA = 0.55 + 0.60 * GAIN;
+
+  var pintarPedido = false;
+  var raton = { x: 0, y: 0 };   // objetivo, entre -1 y 1
+  var suave = { x: 0, y: 0 };   // valor perseguido con lerp
+
+  /* Cachear los hijos con parallax: buscarlos en cada frame sería trabajo tirado. */
+  var piezas = capas.map(function (capa) {
+    return Array.prototype.slice.call(capa.querySelectorAll('[data-parallax]'))
+      .map(function (el) {
+        return { el: el, fuerza: parseFloat(el.dataset.parallax) || 0 };
+      });
+  });
+
+  /* Devolver la sección a su estado legible en flujo. Se llama cuando el efecto no
+     se puede animar con garantías: mejor una lista de capas que un hueco en negro. */
+  function desactivar() {
+    seccion.classList.remove('activa');
+    capas.forEach(function (capa) {
+      capa.style.opacity = '';
+      capa.style.transform = '';
+      capa.style.pointerEvents = '';
+      capa.removeAttribute('aria-hidden');
+    });
+    piezas.forEach(function (lista) {
+      lista.forEach(function (pieza) { pieza.el.style.transform = ''; });
+    });
+  }
+
+  function pintar() {
+    pintarPedido = false;
+    if (!document.documentElement.classList.contains('motion')) { desactivar(); return; }
+
+    /* Encender el modo animado ANTES de medir: la altura de 500vh depende de él. */
+    seccion.classList.add('activa');
+
+    /* Una sola lectura de layout por frame, y después solo escrituras.
+       Mezclar lecturas y escrituras es lo que produce layout thrashing. */
+    var arriba    = seccion.getBoundingClientRect().top;
+    var recorrido = seccion.offsetHeight - window.innerHeight;
+
+    /* VIEWPORT DE 0 PX y demás casos sin sitio para animar. Si saliéramos aquí sin
+       más, las capas 2 en adelante se quedarían invisibles para siempre. */
+    if (recorrido <= 0) { desactivar(); return; }
+
+    var p = Math.min(1, Math.max(0, -arriba / recorrido));
+    var camara = p * (N - 1);
+
+    /* Lerp del ratón: perseguir el objetivo en vez de saltar a él. El 0.08 es la
+       inercia. Más bajo, más pesado; más alto, más nervioso. */
+    suave.x += (raton.x - suave.x) * 0.08;
+    suave.y += (raton.y - suave.y) * 0.08;
+
+    for (var i = 0; i < N; i++) {
+      var d = camara - i;
+
+      /* ESCALA. El dial comprime el recorrido alrededor de 1, no lo apaga. */
+      var escala = 1 + (Math.pow(BASE, d) - 1) * GAIN;
+
+      /* OPACIDAD. Meseta a plena luz mientras la capa manda, y caída suave
+         (smoothstep) al alejarse. Con una rampa recta, en el punto de cruce las dos
+         capas se quedaban a media opacidad y el texto no se leía en ninguna.
+         Nunca se multiplica por el dial: un fundido no marea a nadie, y es
+         justamente lo que sostiene el efecto cuando el zoom se queda corto. */
+      var t = Math.min(1, Math.max(0, (Math.abs(d) - MESETA) / (VENTANA - MESETA)));
+      var opacidad = 1 - (t * t * (3 - 2 * t));
+
+      var capa = capas[i];
+      capa.style.opacity = opacidad.toFixed(3);
+      capa.style.transform = 'scale(' + escala.toFixed(4) + ')';
+      /* Una capa apagada no debe robar clics ni foco a la que sí se ve. */
+      capa.style.pointerEvents = opacidad > 0.5 ? 'auto' : 'none';
+      capa.setAttribute('aria-hidden', opacidad > 0.5 ? 'false' : 'true');
+
+      if (opacidad <= 0) continue;   // no calcular el interior de lo invisible
+
+      var interior = piezas[i];
+      for (var j = 0; j < interior.length; j++) {
+        var pieza = interior[j];
+        /* Parallax de SCROLL: no solicitado, se multiplica por el dial. */
+        var y = d * DESFASE * pieza.fuerza * GAIN;
+        /* Parallax de RATÓN: lo dirige el visitante, NO se multiplica por el dial. */
+        var mx = suave.x * RATON * pieza.fuerza;
+        var my = suave.y * RATON * pieza.fuerza;
+        pieza.el.style.transform =
+          'translate3d(' + mx.toFixed(2) + 'px,' + (y + my).toFixed(2) + 'px,0)';
+      }
+    }
+  }
+
+  function pedirPintar() {
+    if (pintarPedido) return;
+    pintarPedido = true;
+    requestAnimationFrame(pintar);
+  }
+
+  addEventListener('scroll', pedirPintar, { passive: true });
+  addEventListener('resize', pedirPintar);
+
+  /* Un panel embebido puede pasar de 0 px a su tamaño real SIN disparar 'resize'
+     en window. El observer es lo que rescata al efecto en ese caso. */
+  if (self.ResizeObserver) new ResizeObserver(pedirPintar).observe(document.documentElement);
+
+  /* El ratón solo cambia el objetivo. Quien pinta es siempre el rAF. */
+  addEventListener('pointermove', function (e) {
+    raton.x = (e.clientX / innerWidth) * 2 - 1;
+    raton.y = (e.clientY / innerHeight) * 2 - 1;
+    pedirPintar();
+  }, { passive: true });
+
+  /* El lerp del ratón necesita frames aunque nadie se mueva, o se quedaría a medias.
+     Se apaga solo cuando ya ha alcanzado el objetivo. */
+  (function respirar() {
+    if (Math.abs(raton.x - suave.x) > 0.001 || Math.abs(raton.y - suave.y) > 0.001) pedirPintar();
+    requestAnimationFrame(respirar);
+  })();
+
+  pintar();
+  /* WATCHDOG (regla de la casa): si el primer pintado ocurrió con la página a medio
+     medir (fuentes, imágenes, pestaña en segundo plano), se repite ya medida. */
+  addEventListener('load', function () { setTimeout(pintar, 400); });
+
+  /* La válvula visible se adapta al estado actual: apagar si hay movimiento,
+     recuperarlo si el visitante lo apagó o si su sistema lo tiene atenuado. */
+  var valvula = document.querySelector('[data-valvula]');
+  if (valvula && GAIN < 1) {
+    valvula.textContent = 'Activar movimiento';
+    valvula.href = '?motion=full';
+  }
+})();
+</script>
+
+</body>
+</html>

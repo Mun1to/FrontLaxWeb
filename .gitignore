@@ -1,0 +1,41 @@
+# Dependencias (si algun dia se prueban las plantillas con un servidor real)
+node_modules/
+.pnpm-store/
+
+# Builds y salidas
+dist/
+build/
+.vite/
+.next/
+
+# Secretos: nunca deben entrar aqui
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Sistema y editores
+desktop.ini
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Artefactos de sesion
+*.log
+.playwright-mcp/
+
+# Buzon entre sesiones (regla Q): efimero y local, nunca historial
+BUZON.md
+
+# Contexto interno del taller: no sale en un repositorio publico
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.github/copilot-instructions.md
+.cursor/
+bitacora/
+research/
+.claude/worktrees/
+__pycache__/

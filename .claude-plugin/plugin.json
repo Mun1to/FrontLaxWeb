@@ -1,0 +1,13 @@
+{
+  "name": "frontlaxweb",
+  "description": "Parallax, scroll-driven motion, micro-interactions and premium gestures for landing pages, in React (Motion + Lenis) or plain HTML/CSS/JS (GSAP + Lenis). It starts from a brief, scales motion amplitude instead of switching it off, and stays smooth on machines without a graphics card.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Mun1to",
+    "url": "https://github.com/Mun1to"
+  },
+  "homepage": "https://github.com/Mun1to/FrontLaxWeb",
+  "repository": "https://github.com/Mun1to/FrontLaxWeb",
+  "license": "MIT",
+  "keywords": ["parallax", "scroll", "animation", "motion", "gsap", "lenis", "landing-page"]
+}

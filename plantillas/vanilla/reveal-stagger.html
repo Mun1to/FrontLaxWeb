@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<!--
+  FrontLaxWeb · Receta nº2: SCROLL-REVEAL CON STAGGER (versión vanilla, 0 dependencias)
+  =====================================================================================
+  QUÉ ES: los elementos entran suavemente al aparecer en pantalla (reveal), y si son un
+  grupo (tarjetas, líneas de texto), entran EN CASCADA con un pequeño retraso entre cada
+  uno (stagger). Es el efecto más usado en las webs premium: barato, elegante y seguro.
+
+  CÓMO FUNCIONA (3 piezas):
+    1. CSS define el estado "oculto" (opacity 0 + desplazado) y el "visible", con una
+       transición SOLO de transform/opacity (GPU, 60fps garantizados).
+    2. El stagger se logra con una variable CSS `--i` por hijo: delay = --i × 90ms.
+       Cero JavaScript para los tiempos: el navegador hace el trabajo.
+    3. Un IntersectionObserver añade la clase `.in` cuando el elemento asoma un 15%.
+       Se des-observa tras dispararse: cada elemento anima UNA vez y no se re-calcula.
+
+  POLÍTICA DE MOVIMIENTO DE LA CASA (OBLIGATORIA):
+    - Las animaciones se muestran a TODOS los visitantes, ignorando prefers-reduced-motion
+      (estilo Awwwards). El interruptor central es la clase `motion` en <html>, que se pone
+      SIEMPRE salvo que la URL traiga ?motion=off (válvula de escape).
+    - `motion` también hace de guardia anti-JS-roto: el estado oculto solo se aplica si el
+      script del <head> corrió (progressive enhancement: nunca una página en blanco).
+-->
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Receta nº2: Reveal + Stagger (vanilla)</title>
+<!-- Interruptor central de movimiento, ANTES de pintar (sin parpadeo):
+     .motion SIEMPRE, salvo válvula de escape ?motion=off en la URL -->
+<script>
+  (function () {
+    var d = document.documentElement;
+    d.classList.add("js");
+    if (!/[?&]motion=off/.test(location.search)) d.classList.add("motion");
+  })();
+</script>
+<style>
+  :root { --bg:#0e0e12; --text:#f2f2f5; --muted:#9a9aa8; --card:#17171e; --line:#26262f; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; }
+  .spacer { height:90vh; display:grid; place-items:center; color:var(--muted); }
+  section { max-width:900px; margin:0 auto; padding:15vh 24px; }
+  h2 { font-size:clamp(26px,4vw,38px); letter-spacing:-1px; margin-bottom:10px; }
+  .sub { color:var(--muted); margin-bottom:36px; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:22px; }
+  .card h3 { font-size:16px; margin-bottom:6px; }
+  .card p { font-size:13.5px; color:var(--muted); }
+  @media (max-width:640px){ .grid{ grid-template-columns:1fr; } }
+
+  /* ==================== LA RECETA ==================== */
+
+  /* 1) Estado oculto (solo si el movimiento está permitido) + transición. La curva
+        cubic-bezier(.22,1,.36,1) ("ease-out-quint") da la sensación premium:
+        rápida al inicio, aterrizaje suave. */
+  html.motion [data-reveal] {
+    opacity: 0;
+    transform: translateY(26px);
+    transition:
+      opacity .8s cubic-bezier(.22,1,.36,1),
+      transform .8s cubic-bezier(.22,1,.36,1);
+    /* 2) EL STAGGER: cada hijo trae su índice en --i y eso escala su retraso.
+          Sin --i (elementos sueltos) el delay es 0 y funciona igual. */
+    transition-delay: calc(var(--i, 0) * 90ms);
+  }
+
+  /* Estado visible: el observer añade .in y la transición hace el resto */
+  html.motion [data-reveal].in { opacity: 1; transform: none; }
+
+  /* 3) Sin .motion (válvula ?motion=off o JS roto): nada se oculta ni anima.
+        NO añadir @media (prefers-reduced-motion): política "todo para todos". */
+</style>
+</head>
+<body>
+
+<div class="spacer">Baja para ver la receta ↓</div>
+
+<section>
+  <!-- Elementos sueltos: reveal simple, sin índice -->
+  <h2 data-reveal>Un titular que entra con clase</h2>
+  <p class="sub" data-reveal style="--i:1">Y un subtítulo que le sigue un latido después.</p>
+
+  <!-- Grupo: cada tarjeta lleva su --i, y de ahí la cascada. El HTML declara el orden, el CSS el ritmo. -->
+  <div class="grid">
+    <div class="card" data-reveal style="--i:0"><h3>Primera</h3><p>Entro la primera (delay 0ms).</p></div>
+    <div class="card" data-reveal style="--i:1"><h3>Segunda</h3><p>Yo 90ms después.</p></div>
+    <div class="card" data-reveal style="--i:2"><h3>Tercera</h3><p>Y yo a los 180ms. Cascada.</p></div>
+  </div>
+</section>
+
+<div class="spacer">Más contenido para seguir probando ↓</div>
+
+<section>
+  <h2 data-reveal>Funciona en cualquier sección</h2>
+  <p class="sub" data-reveal style="--i:1">Reutiliza <code>data-reveal</code> + <code>--i</code> donde quieras.</p>
+</section>
+
+<script>
+  // ==================== EL MOTOR (10 líneas) ====================
+  // IntersectionObserver avisa cuando un elemento asoma en pantalla, SIN escuchar el
+  // evento scroll (más barato: el navegador lo calcula en su propio ciclo).
+  (function () {
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) {
+          e.target.classList.add("in");
+          io.unobserve(e.target);       // una vez visto, deja de vigilarlo (memoria libre)
+        }
+      }
+    }, {
+      threshold: 0.15,                  // dispara cuando asoma el 15% del elemento
+      rootMargin: "0px 0px -8% 0px"     // un pelín antes del borde inferior: se siente más vivo
+    });
+    document.querySelectorAll("[data-reveal]").forEach((el) => io.observe(el));
+
+    // Red de seguridad: si el navegador tarda en entregar observaciones (pestaña en
+    // segundo plano, webviews incrustados), revela lo que ya está a la vista al cargar.
+    // Regla de oro: nunca dejes contenido invisible a merced de un observer mudo.
+    addEventListener("load", () => setTimeout(() => {
+      document.querySelectorAll("[data-reveal]:not(.in)").forEach((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.top < innerHeight && r.bottom > 0) el.classList.add("in");
+      });
+    }, 400));
+  })();
+</script>
+</body>
+</html>

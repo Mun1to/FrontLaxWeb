@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gestos: tarjeta arrastrable con spring interrumpible</title>
+
+<!--
+  FASE 4 de FrontLaxWeb: GESTOS Y SPRINGS. Sin dependencias.
+  Terreno distinto al del scroll: aquí el mando no es la rueda, es el dedo.
+
+  LOS CUATRO PRINCIPIOS QUE DEMUESTRA (de SKILL.md, destilados de las WWDC)
+
+  1. INTERRUMPIBILIDAD (el más importante de los 17)
+     Agarra la tarjeta mientras vuelve al centro. Se engancha donde está, sin saltos.
+     Esa es la razón de usar un spring y no una transición CSS: un spring siempre sabe
+     animar DESDE su posición actual, porque su estado es posición + velocidad.
+     Una transición de duración fija solo sabe ir de A a B, así que al interrumpirla
+     hay que reiniciarla, y se ve la costura.
+
+  2. TRASPASO DE VELOCIDAD
+     Al soltar, la tarjeta no arranca de cero: hereda la velocidad que llevaba tu dedo.
+     Sin esto, el dedo va a 900 px/s, se levanta, y la animación empieza quieta: el ojo
+     lo lee como un tirón. La telemetría de abajo enseña la velocidad heredada.
+
+  3. RUBBER BANDING
+     En vertical hay un tope, pero no es seco: a partir de cierto punto cada píxel de
+     dedo mueve menos tarjeta. Fórmula de resistencia progresiva, la misma idea que el
+     rebote del scroll de iOS.
+
+  4. CONSISTENCIA ESPACIAL
+     Si la descartas hacia la derecha, vuelve a entrar por la derecha. Lo que sale por
+     un lado no reaparece por el contrario: el espacio tiene que ser creíble.
+
+  QUÉ TIENE QUE VER EL DIAL --motion-gain (política de la casa)
+  El arrastre, la vuelta al centro y la goma NO se escalan: los dirige el visitante en
+  tiempo real (regla 3 del dial). Lo que sí depende del dial:
+    - el REBOTE, subiendo la amortiguación hasta la crítica (con gain 0 no rebota).
+    - la REENTRADA de la tarjeta descartada, que es movimiento no solicitado: su
+      recorrido se multiplica por el dial, y con gain 0 se queda en un fundido.
+-->
+
+<script>
+/* Interruptor central de movimiento (política de la casa). */
+(function () {
+  var h = document.documentElement;
+  var q = new URLSearchParams(location.search).get('motion');
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var gain = q === 'off' ? 0 : q === 'full' ? 1 : reduce ? 0.25 : 1;
+  h.style.setProperty('--motion-gain', String(gain));
+  h.classList.toggle('motion', gain > 0);
+})();
+</script>
+
+<style>
+  :root {
+    --bg: #0b0d12; --tarjeta: #151a24; --fg: #f2f4f8; --tenue: #8a93a6;
+    --acento: #6ee7d1; --peligro: #ff8f6b;
+    --fuente: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --motion-gain: 1;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--fg);
+    font-family: var(--fuente); display: grid; place-items: center; gap: 1.5rem;
+    padding: 2rem 1rem; -webkit-font-smoothing: antialiased;
+  }
+  h1 { font-size: clamp(1.1rem, 2.6vw, 1.5rem); margin: 0; text-align: center; }
+  .ayuda { color: var(--tenue); margin: 0; text-align: center; max-width: 46ch; font-size: .92rem; }
+
+  .pista {
+    position: relative; width: min(92vw, 420px); height: 300px;
+    display: grid; place-items: center;
+    border: 1px dashed color-mix(in srgb, var(--tenue) 35%, transparent);
+    border-radius: 20px;
+  }
+  /* Marcas de los límites de descarte: se ven al arrastrar y explican el umbral. */
+  .pista::before, .pista::after {
+    content: ''; position: absolute; top: 12%; bottom: 12%; width: 2px;
+    background: var(--peligro); opacity: 0; transition: opacity .18s;
+  }
+  .pista::before { left: 8%; } .pista::after { right: 8%; }
+  .pista.cerca::before, .pista.cerca::after { opacity: .55; }
+
+  .tarjeta {
+    width: 220px; height: 150px; border-radius: 18px;
+    background: var(--tarjeta); border: 1px solid color-mix(in srgb, var(--acento) 30%, transparent);
+    display: grid; place-items: center; gap: .35rem; padding: 1.2rem; text-align: center;
+    box-shadow: 0 18px 40px -18px rgba(0,0,0,.9);
+    cursor: grab; user-select: none;
+    touch-action: none;          /* el navegador NO se queda el gesto: lo gestionamos nosotros */
+    will-change: transform;
+  }
+  .tarjeta:active { cursor: grabbing; }
+  .tarjeta:focus-visible { outline: 2px solid var(--acento); outline-offset: 4px; }
+  .tarjeta strong { font-size: 1rem; }
+  .tarjeta span { color: var(--tenue); font-size: .82rem; }
+
+  /* Telemetría: no es decoración, es la prueba de que el traspaso de velocidad ocurre. */
+  .telemetria {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem;
+    width: min(92vw, 420px); font-variant-numeric: tabular-nums;
+  }
+  .dato {
+    background: color-mix(in srgb, var(--tarjeta) 70%, transparent);
+    border-radius: 12px; padding: .6rem .8rem;
+  }
+  .dato b { display: block; font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: var(--tenue); font-weight: 600; }
+  .dato span { font-size: 1rem; }
+
+  .valvula {
+    font: inherit; font-size: .8rem; color: var(--tenue);
+    border: 1px solid currentColor; border-radius: 999px;
+    padding: .45rem .9rem; text-decoration: none;
+  }
+  .valvula:hover, .valvula:focus-visible { color: var(--fg); }
+</style>
+</head>
+<body>
+
+<h1>Arrástrame, suéltame, y agárrame a media vuelta</h1>
+<p class="ayuda">
+  Suelta con fuerza hacia un lado para descartarla. Con el teclado: enfócala con el tabulador,
+  muévela con las flechas y descártala con Enter.
+</p>
+
+<div class="pista" data-pista>
+  <div class="tarjeta" data-tarjeta tabindex="0" role="button" aria-label="Tarjeta arrastrable. Flechas para mover, Enter para descartar.">
+    <strong>Tarjeta</strong>
+    <span>posición + velocidad</span>
+  </div>
+</div>
+
+<div class="telemetria">
+  <div class="dato"><b>Estado</b><span data-estado>en reposo</span></div>
+  <div class="dato"><b>Velocidad</b><span data-velocidad>0 px/s</span></div>
+  <div class="dato"><b>Amortiguación</b><span data-damping>0.62</span></div>
+</div>
+
+<a class="valvula" href="?motion=off" data-valvula>Reducir movimiento</a>
+
+<script>
+(function () {
+  var tarjeta = document.querySelector('[data-tarjeta]');
+  var pista   = document.querySelector('[data-pista]');
+  if (!tarjeta || !pista) return;
+
+  var salidaEstado = document.querySelector('[data-estado]');
+  var salidaVel    = document.querySelector('[data-velocidad]');
+  var salidaDamp   = document.querySelector('[data-damping]');
+
+  var GAIN = parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue('--motion-gain')
+  ) || 0;
+
+  /* ---- PARÁMETROS DEL SPRING -----------------------------------------------
+     Se describen como en las herramientas de Apple y de Motion, no en unidades
+     de física, porque así se piensan mejor:
+       RESPUESTA  = cuánto tarda en llegar, en segundos. Más alto, más perezoso.
+       DAMPING    = 1 es amortiguación crítica: llega y para, sin rebotar.
+                    Por debajo de 1 rebota; cuanto más bajo, más juguetón.
+     El dial sube la amortiguación hasta la crítica: el rebote es lo que más
+     molesta a quien pidió menos movimiento, y es lo primero que se retira. */
+  var RESPUESTA = 0.42;
+  var DAMPING   = 1 - (1 - 0.62) * GAIN;
+  salidaDamp.textContent = DAMPING.toFixed(2);
+
+  var LIMITE_Y     = 60;    // a partir de aquí, en vertical, empieza la goma
+  var VEL_DESCARTE = 800;   // px/s a partir de los cuales se descarta al soltar
+  var MUESTRA_MS   = 80;    // ventana para medir la velocidad del dedo
+
+  /* Estado del sistema. Un spring ES esto: posición y velocidad persistiendo
+     entre frames. Por eso puede ser interrumpido sin costuras. */
+  var x = 0, y = 0, vx = 0, vy = 0;
+  var destinoX = 0, destinoY = 0;
+  var arrastrando = false, corriendo = false, descartada = false;
+  var agarreX = 0, agarreY = 0, brutoX = 0, brutoY = 0;
+  var muestras = [];
+  var ultimoT = 0;
+
+  /* ---- RUBBER BANDING -------------------------------------------------------
+     Resistencia progresiva: los primeros píxeles pasados del límite casi se
+     regalan, los siguientes cuestan cada vez más, y nunca se llega al tope.
+     Es la misma curva del rebote del scroll de iOS. */
+  function goma(exceso, dimension) {
+    var c = 0.55;
+    return (1 - (1 / ((Math.abs(exceso) * c / dimension) + 1))) * dimension * Math.sign(exceso);
+  }
+
+  function pintar() {
+    tarjeta.style.transform = 'translate3d(' + x.toFixed(2) + 'px,' + y.toFixed(2) + 'px,0)';
+    var umbral = pista.clientWidth * 0.34;
+    pista.classList.toggle('cerca', Math.abs(x) > umbral * 0.6);
+  }
+
+  function arrancarBucle() {
+    if (corriendo) return;
+    corriendo = true;
+    ultimoT = 0;
+    requestAnimationFrame(paso);
+  }
+
+  function paso(t) {
+    if (!ultimoT) ultimoT = t;
+    /* dt acotado: si la pestaña estuvo en segundo plano, el primer frame de vuelta
+       traería un salto enorme y el spring explotaría. */
+    var dt = Math.min((t - ultimoT) / 1000, 1 / 30);
+    ultimoT = t;
+
+    if (!arrastrando) {
+      /* Integración del spring, un eje cada vez.
+           a = -w² * (x - destino) - 2 * damping * w * v
+         w es la frecuencia angular, derivada del tiempo de respuesta. */
+      var w = (2 * Math.PI) / RESPUESTA;
+      var ax = -(w * w) * (x - destinoX) - 2 * DAMPING * w * vx;
+      var ay = -(w * w) * (y - destinoY) - 2 * DAMPING * w * vy;
+      vx += ax * dt;  vy += ay * dt;
+      x  += vx * dt;  y  += vy * dt;
+
+      var quieto = Math.abs(x - destinoX) < 0.4 && Math.abs(vx) < 0.4 &&
+                   Math.abs(y - destinoY) < 0.4 && Math.abs(vy) < 0.4;
+      if (quieto) {
+        x = destinoX; y = destinoY; vx = vy = 0;
+        pintar();
+        corriendo = false;
+        estado(descartada ? 'descartada' : 'en reposo');
+        if (descartada) setTimeout(reentrar, 260);
+        return;   /* el bucle SE APAGA al converger: ni un frame de más */
+      }
+    }
+
+    pintar();
+    requestAnimationFrame(paso);
+  }
+
+  function estado(txt) { salidaEstado.textContent = txt; }
+  function mostrarVel(v) { salidaVel.textContent = Math.round(v) + ' px/s'; }
+
+  /* ---- GESTO ---------------------------------------------------------------- */
+  tarjeta.addEventListener('pointerdown', function (e) {
+    tarjeta.setPointerCapture(e.pointerId);
+    arrastrando = true;
+    descartada = false;
+    /* INTERRUMPIBILIDAD: el agarre se calcula contra la posición ACTUAL, esté la
+       tarjeta donde esté y viniendo de donde viniera. No se reinicia nada. */
+    agarreX = e.clientX - x;  agarreY = e.clientY - y;
+    brutoX = x; brutoY = y;
+    muestras.length = 0;
+    muestras.push({ t: e.timeStamp, x: e.clientX, y: e.clientY });
+    estado('arrastrando');
+    arrancarBucle();
+  });
+
+  tarjeta.addEventListener('pointermove', function (e) {
+    if (!arrastrando) return;
+    brutoX = e.clientX - agarreX;
+    brutoY = e.clientY - agarreY;
+
+    x = brutoX;                       /* el eje del descarte va libre */
+    /* el vertical tiene tope, pero con goma */
+    y = Math.abs(brutoY) <= LIMITE_Y
+      ? brutoY
+      : Math.sign(brutoY) * LIMITE_Y + goma(brutoY - Math.sign(brutoY) * LIMITE_Y, 120);
+
+    muestras.push({ t: e.timeStamp, x: e.clientX, y: e.clientY });
+    while (muestras.length > 2 && e.timeStamp - muestras[0].t > MUESTRA_MS) muestras.shift();
+  });
+
+  function soltar(e) {
+    if (!arrastrando) return;
+    arrastrando = false;
+
+    /* VELOCIDAD DEL DEDO. Se mide sobre una ventana de ~80 ms, no sobre el último
+       par de eventos: el último delta es ruido, y con ruido el traspaso de
+       velocidad se nota como un tirón aleatorio. */
+    var prim = muestras[0], ult = muestras[muestras.length - 1];
+    var lapso = Math.max(1, ult.t - prim.t) / 1000;
+    vx = (ult.x - prim.x) / lapso;
+    vy = (ult.y - prim.y) / lapso;
+    mostrarVel(Math.hypot(vx, vy));
+
+    var umbral = pista.clientWidth * 0.34;
+    if (Math.abs(x) > umbral || Math.abs(vx) > VEL_DESCARTE) {
+      /* CONSISTENCIA ESPACIAL: se va por el lado hacia el que iba, no por el
+         lado en el que está. Con el dedo mandando, ganan las manos. */
+      var lado = Math.abs(vx) > VEL_DESCARTE ? Math.sign(vx) : Math.sign(x);
+      destinoX = lado * (pista.clientWidth + tarjeta.offsetWidth);
+      destinoY = y * 0.4;
+      descartada = true;
+      estado('descartando');
+    } else {
+      destinoX = 0; destinoY = 0;
+      estado('volviendo');
+    }
+    arrancarBucle();
+  }
+  tarjeta.addEventListener('pointerup', soltar);
+  tarjeta.addEventListener('pointercancel', soltar);
+
+  /* REENTRADA: esto SÍ es movimiento no solicitado (la tarjeta se mueve sola por
+     la pantalla), así que su recorrido se multiplica por el dial. Con gain 0 la
+     tarjeta reaparece en su sitio y solo queda el fundido. La opacidad nunca se
+     escala: es lo que garantiza que el visitante vea que algo ha vuelto. */
+  function reentrar() {
+    var lado = Math.sign(x) || 1;
+    x = lado * (pista.clientWidth + tarjeta.offsetWidth) * GAIN;
+    y = 0; vx = vy = 0;
+    destinoX = 0; destinoY = 0;
+    descartada = false;
+    tarjeta.style.opacity = '0';
+    pintar();
+    requestAnimationFrame(function () {
+      tarjeta.style.transition = 'opacity .28s';
+      tarjeta.style.opacity = '1';
+      setTimeout(function () { tarjeta.style.transition = ''; }, 320);
+    });
+    estado('volviendo');
+    arrancarBucle();
+  }
+
+  /* ---- TECLADO --------------------------------------------------------------
+     El mismo spring sirve para el teclado: las flechas mueven el DESTINO y la
+     tarjeta lo persigue. Un segundo camino de animación sería un segundo sitio
+     donde equivocarse. */
+  tarjeta.addEventListener('keydown', function (e) {
+    var salto = 40;
+    if (e.key === 'ArrowLeft')       destinoX -= salto;
+    else if (e.key === 'ArrowRight') destinoX += salto;
+    else if (e.key === 'ArrowUp')    destinoY = Math.max(-LIMITE_Y, destinoY - salto);
+    else if (e.key === 'ArrowDown')  destinoY = Math.min(LIMITE_Y, destinoY + salto);
+    else if (e.key === 'Enter' || e.key === ' ') {
+      destinoX = (Math.sign(destinoX) || 1) * (pista.clientWidth + tarjeta.offsetWidth);
+      descartada = true; estado('descartando');
+    } else if (e.key === 'Escape') { destinoX = 0; destinoY = 0; estado('volviendo'); }
+    else return;
+    e.preventDefault();
+    arrancarBucle();
+  });
+
+  pintar();
+
+  var valvula = document.querySelector('[data-valvula]');
+  if (valvula && GAIN < 1) {
+    valvula.textContent = 'Activar movimiento';
+    valvula.href = '?motion=full';
+  }
+})();
+</script>
+
+</body>
+</html>

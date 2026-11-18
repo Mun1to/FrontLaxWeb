@@ -1,0 +1,54 @@
+/* ============================================================================
+   FrontLaxWeb · modo-ligero.css
+   LO QUE CAMBIA SIN TARJETA GRÁFICA (<html data-ligero>, lo pone modo-ligero.js
+   o useLenis.ts). Con gráfica no se aplica nada de esto.
+
+   Por software, un desenfoque o una mezcla se vuelven a calcular en CADA
+   fotograma, también mientras se baja. Es un atributo fijo, puesto una vez al
+   cargar: no cuesta nada al hacer scroll. Lo de aquí está medido en tres webs
+   reales; antes de añadir algo, medirlo (SKILL.md).
+   ========================================================================= */
+
+/* 1. Los cristales, sin desenfoque: se quedan con su fondo semitransparente. */
+html[data-ligero] *,
+html[data-ligero] *::before,
+html[data-ligero] *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 2. Un halo hecho con `filter: blur()` sobre un círculo de color pasa a un
+      degradado redondo que ya nace difuminado. Para que se vea igual: a doble
+      tamaño con la propiedad `scale` (NO `transform`, que es la del parallax y
+      se pisarían), lleno hasta 2σ antes del borde, la mitad en el borde y nada
+      2σ después, que es lo que deja un desenfoque de σ px. Ejemplo para
+      blur(64px) (blur-3xl de Tailwind), con el color en dos variables puestas
+      en el propio elemento:
+        <span class="orbe ... blur-3xl" style="--orbe: var(--primary); --orbe-a: .3">  */
+html[data-ligero] .orbe {
+  filter: none;
+  scale: 2;
+  background: radial-gradient(
+    circle closest-side,
+    hsl(var(--orbe) / var(--orbe-a)) calc(50% - 64px),
+    hsl(var(--orbe) / calc(var(--orbe-a) / 2)) 50%,
+    transparent calc(50% + 64px)
+  );
+}
+/*    Y si el halo YA era un degradado al que se le añadió blur (unas nubes con
+      blur(90px)), basta con quitar el blur y ajustar el degradado
+      a su caja: el blur escondía que el degradado se cortaba en el borde.
+        html[data-ligero] .nube { filter: none; scale: 1.25;
+          background: radial-gradient(closest-side, rgba(38,74,140,.24), rgba(38,74,140,.10) 55%, transparent); } */
+
+/* 3. Las mezclas (`mix-blend-mode`: overlay, multiply, screen…) obligan a
+      mezclar con todo lo de detrás en cada fotograma. Un grano de película en
+      overlay pasa a mezcla normal con menos opacidad: sigue rompiendo las bandas
+      del degradado (medido: de 33 a 37 fotogramas solo con esto).
+        html[data-ligero] .grano { mix-blend-mode: normal; opacity: .05; } */
+
+/* 4. El 3D no va aquí: cada `getContext('webgl2'|'webgl')` de la web se pide con
+      `failIfMajorPerformanceCaveat: true`, y así cae solo en su versión sin 3D,
+      que TIENE que existir (una imagen, el logo plano, o nada si era adorno).
+
+   5. Las animaciones NO se tocan. Medido: quitarlas no cambiaba nada. */

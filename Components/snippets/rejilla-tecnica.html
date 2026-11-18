@@ -1,0 +1,214 @@
+<!doctype html>
+<!-- Rejilla técnica (blueprint grid). Autocontenido: se abre en el navegador tal cual,
+     sin dependencias. Tema claro/oscuro automático por prefers-color-scheme (Tier A de
+     SmartDefaults: sin botón, sin JavaScript).
+
+     Las tres técnicas de aquí abajo están leídas del CSS en vivo de tailwindcss.com y
+     peership.dev el 2026-08-20, no reconstruidas de memoria. La diferencia importa:
+     casi todos los tutoriales de este patrón enseñan solo el fondo de rejilla, que es
+     la parte que menos hace. Lo que da la sensación de plano técnico son las líneas
+     ESTRUCTURALES y las cruces, no la trama. -->
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rejilla técnica</title>
+<style>
+  /* ---------------------------------------------------------------------
+     UN SOLO TOKEN PARA TODAS LAS LÍNEAS.
+     Se lo copiamos a Tailwind, que llama --pattern-fg a la variable que
+     colorea a la vez los bordes, el rayado de los márgenes y los puntos.
+     Con un token por pieza, el día que la línea queda muy fuerte hay que
+     tocar cinco sitios y siempre se queda uno sin tocar.
+     --------------------------------------------------------------------- */
+  :root{
+    color-scheme: light dark;
+    --plano:        rgba(0,0,0,.10);   /* la línea estructural */
+    --plano-trama:  rgba(0,0,0,.085);  /* la trama de fondo, siempre más floja */
+    /* Las cruces y las marcas van en TINTA, no en el color de marca: negro sobre
+       claro y blanco sobre oscuro. Es a propósito: en un catálogo que ya usa el color para clasificar, una cruz de
+       color se lee como una categoría más y no como lo que es, que es la
+       retícula. En monocromo la marca deja de competir y el color vuelve a
+       significar algo. */
+    --marca:        #18181b;
+    --tinta:        #18181b;
+    --tinta-suave:  #71717a;
+    --papel:        #fff;
+    --mono: ui-monospace, 'JetBrains Mono', Consolas, monospace;
+    --paso: 14px;  /* el paso de la trama. 8, 10, 14 o 16; nunca un número raro */
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --plano:       rgba(255,255,255,.12);
+      --plano-trama: rgba(255,255,255,.07);
+      --marca:       #fafafa;
+      --tinta:       #fafafa;
+      --tinta-suave: #a1a1aa;
+      --papel:       #09090b;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--papel);color:var(--tinta);line-height:1.5;
+       font-family:'Inter',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+
+  /* =====================================================================
+     TÉCNICA 1 - EL CANAL
+     Un contenedor centrado con línea a izquierda y derecha que recorre la
+     página ENTERA, y cada banda cerrada por abajo con otra. Eso es lo que
+     hace peership.dev y es el 80% del efecto.
+
+     Las dos verticales no se cortan nunca entre secciones: por eso hay dos
+     capas. `.banda` ocupa todo el ancho y pone la horizontal; `.canal` va
+     dentro, centrado, y pone las verticales. Si las verticales se pusieran
+     en la banda, cada sección tendría las suyas y en el empalme se verían
+     dos líneas de 1px pegadas donde debería haber una.
+     ===================================================================== */
+  .banda{ border-bottom:1px solid var(--plano); }
+  .canal{
+    max-width:960px; margin:0 auto; position:relative;
+    border-left:1px solid var(--plano);
+    border-right:1px solid var(--plano);
+  }
+  /* El margen de fuera va rayado a 315 grados, como el papel de plano.
+     Truco de Tailwind: el segundo tramo del repeating-linear-gradient se
+     declara al 50%, así el rayado sale fino sin calcular grosores. */
+  .margen{
+    background-image:repeating-linear-gradient(315deg,
+      var(--plano-trama) 0, var(--plano-trama) 1px, transparent 0, transparent 50%);
+    background-size:9px 9px;
+  }
+
+  /* =====================================================================
+     TÉCNICA 2 - LA CRUZ EN LA INTERSECCIÓN
+     Un SVG de 16px con dos trazos, colocado en la esquina y desplazado
+     MEDIA cruz hacia fuera con translate(±50%,±50%). Así el centro de la
+     cruz cae exactamente encima del cruce de las dos líneas.
+
+     El detalle que casi todo el mundo se salta: sin el translate, la cruz
+     queda DENTRO de la caja y parece un icono decorativo suelto. Con él,
+     parece que la retícula tiene un nudo ahí. Es la misma pieza y cambia
+     por completo lo que comunica.
+
+     Y va en tinta, nunca en el color de la categoría: catorce cruces de
+     catorce colores dejan de ser una retícula y pasan a parecer catorce
+     etiquetas.
+     ===================================================================== */
+  .cruz{
+    position:absolute; width:15px; height:15px; color:var(--marca);
+    pointer-events:none; z-index:2;
+  }
+  .cruz.arriba-izq{ top:0;    left:0;  transform:translate(-50%,-50%) }
+  .cruz.arriba-der{ top:0;    right:0; transform:translate( 50%,-50%) }
+  .cruz.abajo-izq { bottom:0; left:0;  transform:translate(-50%, 50%) }
+  .cruz.abajo-der { bottom:0; right:0; transform:translate( 50%, 50%) }
+
+  /* =====================================================================
+     TÉCNICA 3 - LA TRAMA DE FONDO
+     La parte fácil y la que menos aporta. Puntos o cuadrícula, siempre por
+     debajo del 10% de opacidad: si se lee como textura, ya está mal.
+     ===================================================================== */
+  .puntos{
+    background-image:radial-gradient(var(--plano-trama) 1.5px, transparent 1.5px);
+    background-size:var(--paso) var(--paso);
+  }
+  .cuadricula{
+    background-image:
+      linear-gradient(var(--plano-trama) 1px, transparent 1px),
+      linear-gradient(90deg, var(--plano-trama) 1px, transparent 1px);
+    background-size:var(--paso) var(--paso);
+  }
+
+  /* =====================================================================
+     TÉCNICA 4 - LAS MARCAS DE ENCUADRE (las esquinas en L)
+     Cuatro cuadrados de 9px a los que solo se les pintan dos lados. Sirven
+     para señalar UNA pieza sin encerrarla en un recuadro entero, que es lo
+     que las hace útiles: dicen «mira aquí» sin añadir otra caja al montón.
+     ===================================================================== */
+  .marca{ position:absolute; width:9px; height:9px; border:0 solid var(--marca);
+          pointer-events:none }
+  .marca.a{ top:-1px; left:-1px;  border-top-width:1px; border-left-width:1px }
+  .marca.b{ top:-1px; right:-1px; border-top-width:1px; border-right-width:1px }
+  .marca.c{ bottom:-1px; left:-1px;  border-bottom-width:1px; border-left-width:1px }
+  .marca.d{ bottom:-1px; right:-1px; border-bottom-width:1px; border-right-width:1px }
+
+  /* ---- La retícula interior: hijos con border-right/bottom y el último sin.
+       Nunca border en los cuatro lados de cada celda, que donde dos celdas se
+       tocan salen 2px y la retícula se ve sucia. ---- */
+  .rejilla{ display:grid; grid-template-columns:repeat(3,1fr) }
+  .celda{ padding:20px 22px; position:relative; min-height:110px;
+          border-right:1px solid var(--plano); border-bottom:1px solid var(--plano) }
+  .celda:nth-child(3n){ border-right:0 }
+  .celda:nth-child(n+4){ border-bottom:0 }
+
+  /* ---- Rótulo monoespaciado. Parte del lenguaje: la etiqueta va en mono,
+       en mayúsculas y muy espaciada, y el contenido en la tipografía normal.
+       11px es el suelo; por debajo no se baja aunque «quepa». ---- */
+  .rotulo{ font-family:var(--mono); font-size:11px; letter-spacing:.16em;
+           text-transform:uppercase; color:var(--tinta-suave) }
+
+  .cabecera{ padding:44px 28px; position:relative }
+  .cabecera h1{ font-size:32px; margin:12px 0 8px; letter-spacing:-.025em; line-height:1.15 }
+  .cabecera p{ margin:0; color:var(--tinta-suave); max-width:54ch }
+  .celda h2{ margin:8px 0 4px; font-size:16px }
+  .celda p{ margin:0; font-size:13px; color:var(--tinta-suave) }
+  .barra{ display:flex; justify-content:space-between; align-items:center;
+          padding:15px 28px; font-size:13px }
+  .barra .logo{ font-weight:700; letter-spacing:-.01em }
+  .barra nav{ display:flex; gap:20px; color:var(--tinta-suave) }
+  .pieza{ margin:44px auto; max-width:300px; position:relative;
+          border:1px solid var(--plano); padding:26px 30px; text-align:center;
+          font-family:var(--mono); font-size:12px; letter-spacing:.1em;
+          text-transform:uppercase; color:var(--tinta-suave) }
+</style>
+</head>
+<body>
+
+  <div class="banda">
+    <div class="canal">
+      <div class="barra">
+        <span class="logo">Rejilla técnica</span>
+        <nav><span>Canal</span><span>Cruces</span><span>Trama</span><span>Marcas</span></nav>
+      </div>
+    </div>
+  </div>
+
+  <div class="banda margen">
+    <div class="canal puntos" style="background-color:var(--papel)">
+      <svg class="cruz arriba-izq" viewBox="0 0 16 16" fill="none"><path d="M8 2V14M2 8H14" stroke="currentColor" stroke-width="1"/></svg>
+      <svg class="cruz arriba-der" viewBox="0 0 16 16" fill="none"><path d="M8 2V14M2 8H14" stroke="currentColor" stroke-width="1"/></svg>
+      <svg class="cruz abajo-izq"  viewBox="0 0 16 16" fill="none"><path d="M8 2V14M2 8H14" stroke="currentColor" stroke-width="1"/></svg>
+      <svg class="cruz abajo-der"  viewBox="0 0 16 16" fill="none"><path d="M8 2V14M2 8H14" stroke="currentColor" stroke-width="1"/></svg>
+      <div class="cabecera">
+        <span class="rotulo">Cómo se dibuja un plano</span>
+        <h1>Las líneas no son el fondo:<br>son la estructura</h1>
+        <p>La trama de puntos es lo último que se nota. Lo que da la sensación de plano
+           técnico son las dos verticales que no se cortan nunca y las cruces en los nudos.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="banda">
+    <div class="canal">
+      <div class="rejilla">
+        <div class="celda"><span class="rotulo">01</span><h2>El canal</h2><p>Dos verticales continuas y una horizontal por banda.</p></div>
+        <div class="celda"><span class="rotulo">02</span><h2>Las cruces</h2><p>SVG de 16px desplazado media cruz hacia fuera.</p></div>
+        <div class="celda"><span class="rotulo">03</span><h2>La trama</h2><p>Puntos o cuadrícula, siempre por debajo del 10%.</p></div>
+        <div class="celda"><span class="rotulo">04</span><h2>Las marcas</h2><p>Cuatro esquinas en L para señalar sin encerrar.</p></div>
+        <div class="celda"><span class="rotulo">05</span><h2>El rótulo</h2><p>Monoespaciado, mayúsculas, 11px de suelo.</p></div>
+        <div class="celda"><span class="rotulo">06</span><h2>La esquina</h2><p>Recta. Un radio y el lenguaje se cae entero.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="banda cuadricula">
+    <div class="canal" style="background:transparent">
+      <div class="pieza">
+        <span class="marca a"></span><span class="marca b"></span>
+        <span class="marca c"></span><span class="marca d"></span>
+        Marcas de encuadre
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

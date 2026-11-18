@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Header con píldora deslizante</title>
+
+<!--
+  PIEZA: header de navegación con una píldora que viaja al item señalado.
+  Autocontenida, sin dependencias. Se abre con doble clic.
+
+  POR QUÉ ESTA PIEZA Y NO UN HOVER NORMAL
+  Lo genérico es dar a cada item su propio fondo: cinco fondos que se encienden y
+  se apagan. El ojo entonces ve parpadeos, y los parpadeos no significan nada.
+  Aquí hay UN solo objeto que se mueve, y eso el ojo lo lee como continuidad:
+  "es la misma cosa, que ahora está en otro sitio". El menú deja de ser cinco
+  luces y pasa a ser un objeto que tú mueves. Cuesta lo mismo y comunica más.
+
+  LAS TRES DECISIONES TÉCNICAS QUE LA HACEN BUENA
+
+  1. SPRING, NO TRANSICIÓN
+     Pasa el ratón rápido por todos los items. La píldora redirige a media
+     trayectoria, sin saltos ni colas. Con una transición CSS de duración fija,
+     cada cambio de destino reinicia la animación y se ve el corte (principio de
+     interrumpibilidad, el primero de la casa). Motor idéntico al de
+     plantillas/vanilla/tarjeta-arrastrable-spring.html.
+
+  2. transform, NUNCA left/width
+     Animar `left` y `width` recalcularía layout en cada frame. Aquí se anima
+     `translateX` + `scaleX`, que van en GPU.
+
+  3. EL RADIO SE COMPENSA A MANO
+     Y ese es el detalle que casi todo el mundo se salta: al escalar en X, las
+     esquinas redondeadas se estiran y la píldora se convierte en una elipse.
+     Se arregla con un radio elíptico dividido por la escala:
+         border-radius: (alto/2 / escalaX)px / (alto/2)px
+     Al aplicarse la escala, el radio horizontal vuelve a su valor real. Es lo
+     mismo que hace Motion por dentro cuando anima con layoutId.
+
+  POLÍTICA DE LA CASA (--motion-gain)
+  El viaje lo dirige el visitante: apunta él, y la distancia la deciden los items,
+  así que no se puede acortar sin romper la función. Lo que sí hace el dial:
+    - retira el rebote subiendo la amortiguación,
+    - y con gain 0 la píldora deja de viajar y aparece directamente en su sitio,
+      con el fundido como única señal. Sigue funcionando, solo que sin trayecto.
+-->
+
+<style>
+  :root {
+    --bg: #0e0f11; --barra: #17181a; --linea: #2a2c30;
+    --texto: #a8adb6; --texto-vivo: #f4f6f8; --pastilla: #2c2f34;
+    --fuente: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --motion-gain: 1;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--texto);
+    font-family: var(--fuente); display: grid; align-content: start; gap: 2.5rem;
+  }
+
+  .barra {
+    background: var(--barra); border-bottom: 1px solid var(--linea);
+    display: grid; place-items: center; padding: .75rem 1rem;
+  }
+
+  .menu { position: relative; display: flex; gap: .25rem; }
+
+  /* La píldora vive detrás de los enlaces y no participa del layout. */
+  .pildora {
+    position: absolute; left: 0; top: 50%;
+    width: 100px; height: 36px;            /* medidas BASE: el JS escala desde aquí */
+    margin-top: -18px;
+    background: var(--pastilla);
+    opacity: 0; pointer-events: none;
+    transition: opacity .16s ease;
+    transform-origin: left center;
+    will-change: transform;
+  }
+  .menu.senalado .pildora { opacity: 1; }
+
+  .menu a {
+    position: relative;                     /* por encima de la píldora */
+    padding: .5rem .9rem; border-radius: 999px;
+    color: var(--texto); text-decoration: none;
+    font-size: .92rem; font-weight: 500; white-space: nowrap;
+    transition: color .16s ease;            /* color: no es movimiento, no marea */
+  }
+  .menu a:hover, .menu a:focus-visible { color: var(--texto-vivo); }
+  .menu a:focus-visible { outline: 2px solid var(--texto-vivo); outline-offset: 2px; }
+
+  .demo { display: grid; gap: .6rem; justify-items: center; padding: 0 1rem; text-align: center; }
+  .demo p { margin: 0; max-width: 52ch; font-size: .92rem; line-height: 1.55; }
+  .demo code { background: var(--barra); padding: .1rem .4rem; border-radius: 6px; }
+</style>
+</head>
+<body>
+
+<div class="barra">
+  <nav class="menu" data-menu aria-label="Principal">
+    <span class="pildora" data-pildora aria-hidden="true"></span>
+    <a href="#catalogo">Catalog</a>
+    <a href="#horario">Schedule</a>
+    <a href="#caso">Case study</a>
+    <a href="#blog">Blog</a>
+    <a href="#precios">Pricing</a>
+  </nav>
+</div>
+
+<div class="demo">
+  <p>
+    Pasa el ratón despacio y luego muy rápido de un extremo al otro. En el recorrido
+    rápido la píldora no encadena viajes: redirige a mitad de camino, porque la mueve
+    un spring y no una transición.
+  </p>
+  <p>
+    Recórrelo también con el tabulador: el foco la mueve igual que el ratón.
+    Añade <code>?motion=off</code> a la URL y la píldora dejará de viajar, pero
+    seguirá señalando.
+  </p>
+</div>
+
+<script>
+(function () {
+  /* Interruptor central de movimiento (política de la casa). En una web real esto
+     va en el <head>; aquí está junto a la pieza para que sea autocontenida. */
+  var raiz = document.documentElement;
+  var q = new URLSearchParams(location.search).get('motion');
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var GAIN = q === 'off' ? 0 : q === 'full' ? 1 : reduce ? 0.25 : 1;
+  raiz.style.setProperty('--motion-gain', String(GAIN));
+  raiz.classList.toggle('motion', GAIN > 0);
+
+  var menu = document.querySelector('[data-menu]');
+  var pildora = document.querySelector('[data-pildora]');
+  if (!menu || !pildora) return;
+  var enlaces = Array.prototype.slice.call(menu.querySelectorAll('a'));
+
+  var BASE_ANCHO = 100, ALTO = 36;
+  var RESPUESTA = 0.34;
+  var DAMPING = 1 - (1 - 0.68) * GAIN;   /* el dial retira el rebote, no el viaje */
+
+  var x = 0, w = BASE_ANCHO, vx = 0, vw = 0;
+  var destinoX = 0, destinoW = BASE_ANCHO;
+  var corriendo = false, visible = false, ultimoT = 0;
+
+  function pintar() {
+    var sx = w / BASE_ANCHO;
+    pildora.style.transform = 'translateX(' + x.toFixed(2) + 'px) scaleX(' + sx.toFixed(4) + ')';
+    /* Radio elíptico compensado: al aplicarse scaleX, el radio horizontal
+       recupera su valor real y la píldora no se deforma. */
+    pildora.style.borderRadius = (ALTO / 2 / sx).toFixed(2) + 'px / ' + (ALTO / 2) + 'px';
+  }
+
+  function paso(t) {
+    if (!ultimoT) ultimoT = t;
+    var dt = Math.min((t - ultimoT) / 1000, 1 / 30);
+    ultimoT = t;
+
+    var f = (2 * Math.PI) / RESPUESTA;
+    vx += (-(f * f) * (x - destinoX) - 2 * DAMPING * f * vx) * dt;
+    vw += (-(f * f) * (w - destinoW) - 2 * DAMPING * f * vw) * dt;
+    x += vx * dt;  w += vw * dt;
+
+    if (Math.abs(x - destinoX) < 0.3 && Math.abs(vx) < 0.3 &&
+        Math.abs(w - destinoW) < 0.3 && Math.abs(vw) < 0.3) {
+      x = destinoX; w = destinoW; vx = vw = 0;
+      pintar();
+      corriendo = false;
+      return;                       /* el bucle se apaga solo al llegar */
+    }
+    pintar();
+    requestAnimationFrame(paso);
+  }
+
+  function arrancar() {
+    if (corriendo) return;
+    corriendo = true; ultimoT = 0;
+    requestAnimationFrame(paso);
+  }
+
+  function senalar(enlace) {
+    destinoX = enlace.offsetLeft;
+    destinoW = enlace.offsetWidth;
+
+    /* Si la píldora no estaba en pantalla, se COLOCA, no viaja: venir volando
+       desde la esquina sería un movimiento que nadie ha pedido. Y con el dial a
+       cero, todo cambio es una colocación. */
+    if (!visible || GAIN === 0) {
+      x = destinoX; w = destinoW; vx = vw = 0;
+      pintar();
+    }
+    visible = true;
+    menu.classList.add('senalado');
+    if (GAIN > 0) arrancar();
+  }
+
+  function soltar() {
+    /* Si hubiera un item activo (aria-current="page"), aquí es donde la píldora
+       volvería a él en vez de desvanecerse. */
+    visible = false;
+    menu.classList.remove('senalado');
+  }
+
+  enlaces.forEach(function (enlace) {
+    enlace.addEventListener('pointerenter', function () { senalar(enlace); });
+    enlace.addEventListener('focus', function () { senalar(enlace); });
+  });
+  menu.addEventListener('pointerleave', soltar);
+  menu.addEventListener('focusout', function (e) {
+    if (!menu.contains(e.relatedTarget)) soltar();
+  });
+
+  /* Si cambia el ancho de la ventana, las medidas viejas dejan de valer. */
+  addEventListener('resize', function () {
+    var activo = menu.querySelector('a:hover') || document.activeElement;
+    if (visible && enlaces.indexOf(activo) !== -1) senalar(activo);
+  });
+
+  pintar();
+})();
+</script>
+
+</body>
+</html>
